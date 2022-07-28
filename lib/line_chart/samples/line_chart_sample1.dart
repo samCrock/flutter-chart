@@ -1,3 +1,5 @@
+import 'dart:ffi';
+
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
@@ -203,6 +205,7 @@ class _LineChart extends StatelessWidget {
   List<FlSpot> getFLSpots(int dataset) {
     List<FlSpot> spots = [];
     if (data.isEmpty) return [];
+
     final dataIndexes =
         data.mapIndexed((index, element) => index).toList().sublist(0, 95);
 
@@ -217,6 +220,7 @@ class _LineChart extends StatelessWidget {
 
 class LineChartSample extends StatefulWidget {
   final String type;
+  final String? restorationId = 'main';
 
   const LineChartSample({Key? key, required this.type}) : super(key: key);
 
@@ -224,14 +228,69 @@ class LineChartSample extends StatefulWidget {
   State<StatefulWidget> createState() => LineChartSampleState();
 }
 
-class LineChartSampleState extends State<LineChartSample> {
+class LineChartSampleState extends State<LineChartSample>
+    with RestorationMixin {
+  @override
+  String? get restorationId => widget.restorationId;
   List<List<dynamic>> _data = [];
   String _currentDataset = '';
   List _datasets = [];
   int _currentDatasetIndex = 0;
+  int _selectedDateIndex = 0;
   String _datasetSymbol = '';
 
   List _formattedData = [];
+
+  final RestorableDateTime _selectedDate =
+      RestorableDateTime(DateTime(2022, 7, 18));
+  late final RestorableRouteFuture<DateTime?> _restorableDatePickerRouteFuture =
+      RestorableRouteFuture<DateTime?>(
+    onComplete: _selectDate,
+    onPresent: (NavigatorState navigator, Object? arguments) {
+      return navigator.restorablePush(
+        _datePickerRoute,
+        arguments: _selectedDate.value.millisecondsSinceEpoch,
+      );
+    },
+  );
+
+  @override
+  void restoreState(RestorationBucket? oldBucket, bool initialRestore) {
+    registerForRestoration(_selectedDate, 'selected_date');
+    registerForRestoration(
+        _restorableDatePickerRouteFuture, 'date_picker_route_future');
+  }
+
+  static Route<DateTime> _datePickerRoute(
+    BuildContext context,
+    Object? arguments,
+  ) {
+    return DialogRoute<DateTime>(
+      context: context,
+      builder: (BuildContext context) {
+        return DatePickerDialog(
+          restorationId: 'date_picker_dialog',
+          initialEntryMode: DatePickerEntryMode.calendarOnly,
+          initialDate: DateTime.fromMillisecondsSinceEpoch(arguments! as int),
+          firstDate: DateTime(2021),
+          lastDate: DateTime(2023),
+        );
+      },
+    );
+  }
+
+  void _selectDate(DateTime? newSelectedDate) {
+    if (newSelectedDate != null) {
+      setState(() {
+        _selectedDate.value = newSelectedDate;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              'Selected: ${_selectedDate.value.day}/${_selectedDate.value.month}/${_selectedDate.value.year}'),
+        ));
+      });
+      _loadCSV();
+    }
+  }
 
   void _loadCSV() async {
     final _rawData = await rootBundle.loadString("assets/data.csv");
@@ -248,6 +307,8 @@ class LineChartSampleState extends State<LineChartSample> {
       _datasets = _formattedData.first;
       // _datasets.removeAt(0);
       _currentDatasetIndex = _datasets.indexOf(_currentDataset);
+      bool selectedDateIndexFound = false;
+      _selectedDateIndex = 0;
       switch (widget.type) {
         case 'humidity':
           _datasetSymbol = '%';
@@ -263,7 +324,22 @@ class LineChartSampleState extends State<LineChartSample> {
       // log('currentDatasetIndex -> $_currentDatasetIndex');
       _formattedData.removeAt(0);
 
-      // _data.take(10).map((e) => {log('$e')}).toList();
+      _formattedData.asMap().entries.map((entry) {
+        int idx = entry.key;
+        List val = entry.value;
+
+        if (selectedDateIndexFound == false &&
+            val[0].substring(0, 10) ==
+                _selectedDate.value.toString().substring(0, 10)) {
+          _selectedDateIndex = idx;
+          selectedDateIndexFound = true;
+        }
+      }).toList();
+
+      _formattedData =
+          _formattedData.sublist(_selectedDateIndex, _selectedDateIndex + 95);
+
+      log('_formattedData ${_formattedData.length}');
     });
   }
 
@@ -336,16 +412,12 @@ class LineChartSampleState extends State<LineChartSample> {
                 ),
               ],
             ),
-            // IconButton(
-            //   icon: const Icon(
-            //     Icons.refresh,
-            //     color: Colors.white,
-            //   ),
-            //   onPressed: () {
-            //     // setState(() {
-            //     // });
-            //   },
-            // )
+            OutlinedButton(
+              onPressed: () {
+                _restorableDatePickerRouteFuture.present();
+              },
+              child: const Text('Open Date Picker'),
+            ),
           ],
         ),
       ),
